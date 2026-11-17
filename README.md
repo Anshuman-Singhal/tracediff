@@ -13,6 +13,8 @@
 - [Usage](#usage)
 - [Example output](#example-output)
 - [How it works](#how-it-works)
+- [Design decisions and tradeoffs](#design-decisions-and-tradeoffs)
+- [What I would build next](#what-i-would-build-next)
 - [Check types](#check-types)
 - [CI usage](#ci-usage)
 - [Bring your own agent](#bring-your-own-agent)
@@ -99,6 +101,20 @@ Note t5: the trajectory got shorter but the outcome is unchanged, and the differ
 2. **Agents** implement one method, `run(task, tools)`, and execute a ReAct-style loop against a tool registry. Every step (thought, tool call, args, observation, latency) is recorded into a trajectory.
 3. **The runner** evaluates each trajectory against the task's checks and writes `run.json` (scores, check outcomes, full trajectories, token and latency stats).
 4. **The differ** compares two runs and reports regressions, improvements, trajectory changes (added/removed tools, step deltas), and token/latency deltas. Silent behavior shifts are surfaced even when check outcomes are unchanged.
+
+## Design decisions and tradeoffs
+
+- **Deterministic checks before LLM judges.** "Looked up the refund policy before issuing the refund" is a fact about the trajectory, so tracediff asserts it directly. That makes every check free, reproducible, and safe to gate CI on. An LLM judge would add noise to the very signal you are trying to measure. The cost is that tone and helpfulness are out of scope; those belong in a judge layered on top, not in the gate.
+- **Diff, don't just score.** An aggregate pass rate can stay flat while individual tasks flip in both directions. tracediff compares task by task, and a task counts as a regression if any single check newly fails. That is strict on purpose: in production, one new policy violation outweighs a few nicer answers.
+- **Encode business rules, not strings.** The most important checks (`sequence`, `refunds_eligible`) express what the business actually cares about. A refund to an eligible order passes no matter how the agent words its reply; a refund to an ineligible one fails even if the reply sounds perfect.
+- **A fresh tool registry per task.** Tools hold state (a refund changes an order). Rebuilding them for every task means one task's side effects cannot leak into the next, so a failure is always attributable to the task that caused it.
+- **Standard library only.** It runs anywhere a CI runner runs, with no keys and no network, which matters when the agent under test lives inside someone else's infrastructure.
+
+## What I would build next
+
+- **Repeated runs per task.** Real LLM agents are stochastic, so a single run can mistake a flaky check for a regression. Running each task N times and reporting pass rates with confidence intervals would separate real regressions from noise.
+- **A calibrated judge for soft criteria.** An LLM judge for things deterministic checks cannot express, validated against a small set of human labels before anyone trusts it.
+- **Checks as reward signals.** The same check functions that gate CI could score rollouts during fine-tuning, so the definition of "correct" lives in one place.
 
 ## Check types
 
